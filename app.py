@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from scipy.optimize import minimize
+import plotly.express as px
 
 # ==========================================
 # PAGE CONFIGURATION
@@ -15,9 +16,15 @@ st.markdown("### Institutional Capital Allocation & Risk Simulator")
 # SIDEBAR PARAMETERS
 # ==========================================
 st.sidebar.header("Simulation Parameters")
-# Changed minimum value from 10.0 to 0.0
 budget = st.sidebar.slider("Corporate Marketing Budget ($ Millions)", 0.0, 100.0, 50.0)
 fee_discount = st.sidebar.slider("Fee Discount (%)", 0.0, 50.0, 0.0)
+
+st.sidebar.markdown("---")
+st.sidebar.header("Risk Modeling")
+scenario = st.sidebar.selectbox(
+    "Market Stress Test Scenario",
+    ["Normal Market", "2008 Financial Crisis", "2020 COVID Crash", "Tech Bull Rally"]
+)
 
 # ==========================================
 # CORE BUSINESS LOGIC & DATA
@@ -73,6 +80,17 @@ def load_market_data():
         return annual_returns, cov_matrix
 
 annual_returns, cov_matrix = load_market_data()
+
+# Apply Stress Test Adjustments dynamically
+if scenario == "2008 Financial Crisis":
+    annual_returns = annual_returns - 0.35  # Massive market drop
+    cov_matrix = cov_matrix * 2.5           # High volatility/panic
+elif scenario == "2020 COVID Crash":
+    annual_returns = annual_returns - 0.20
+    cov_matrix = cov_matrix * 3.0           # Extreme sudden volatility
+elif scenario == "Tech Bull Rally":
+    annual_returns["XLK"] += 0.25           # Tech booms significantly
+    annual_returns["XLY"] += 0.15
 
 # ==========================================
 # MATH & OPTIMIZATION ENGINES
@@ -131,6 +149,17 @@ with col1:
     # Display table with the index hidden so it looks clean and professional
     st.dataframe(opt_df.style.format({"Recommended Spend ($M)": "{:.2f}"}), hide_index=True)
 
+    # NEW: Plotly Donut Chart
+    fig_donut = px.pie(
+        opt_df, 
+        values="Recommended Spend ($M)", 
+        names="Product Suite",
+        hole=0.4, 
+        title="Optimized Budget Allocation"
+    )
+    fig_donut.update_traces(textinfo='percent+label', textposition='inside')
+    st.plotly_chart(fig_donut, use_container_width=True)
+
 with col2:
     st.subheader("Monte Carlo Risk Simulator")
     np.random.seed(42)
@@ -146,4 +175,14 @@ with col2:
     st.metric("Bear Market Risk (5th Pct)", f"${np.percentile(sim_revenues, 5):.3f} B")
     st.metric("Bull Market Upside (95th Pct)", f"${np.percentile(sim_revenues, 95):.3f} B")
     
-    st.bar_chart(sim_revenues)
+    # NEW: Plotly Histogram (replaces basic bar chart)
+    fig_hist = px.histogram(
+        x=sim_revenues, 
+        nbins=50,
+        title="Monte Carlo Revenue Distribution",
+        labels={'x': 'Expected Fee Revenue ($B)', 'y': 'Probability (Simulations)'},
+        color_discrete_sequence=['#4B8BBE']
+    )
+    fig_hist.add_vline(x=np.mean(sim_revenues), line_dash="dash", line_color="red", annotation_text="Mean")
+    fig_hist.update_layout(showlegend=False)
+    st.plotly_chart(fig_hist, use_container_width=True)
