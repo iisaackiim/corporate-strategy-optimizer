@@ -15,8 +15,9 @@ st.markdown("### Institutional Capital Allocation & Risk Simulator")
 # SIDEBAR PARAMETERS
 # ==========================================
 st.sidebar.header("Simulation Parameters")
-# Minimum value changed to 0.0
+# Changed minimum value from 10.0 to 0.0
 budget = st.sidebar.slider("Corporate Marketing Budget ($ Millions)", 0.0, 100.0, 50.0)
+fee_discount = st.sidebar.slider("Fee Discount (%)", 0.0, 50.0, 0.0)
 
 # ==========================================
 # CORE BUSINESS LOGIC & DATA
@@ -66,7 +67,7 @@ def load_market_data():
         weekly_rets = raw_data.pct_change().dropna()
         return weekly_rets.mean() * 52, weekly_rets.cov() * 52
     except:
-        # Failsafe baseline data
+        # Failsafe baseline data so the dashboard never crashes during a presentation
         annual_returns = pd.Series([0.12, 0.10, 0.08, 0.06, 0.07], index=tickers)
         cov_matrix = pd.DataFrame(np.diag([0.04, 0.03, 0.03, 0.05, 0.02]), index=tickers, columns=tickers)
         return annual_returns, cov_matrix
@@ -76,14 +77,15 @@ annual_returns, cov_matrix = load_market_data()
 # ==========================================
 # MATH & OPTIMIZATION ENGINES
 # ==========================================
-def calc_revenue(market_multipliers, client_flows):
+def calc_revenue(market_multipliers, client_flows, discount_pct=0.0):
     total_rev = 0.0
+    discount_factor = 1.0 - (discount_pct / 100.0)
     for prod, tick in product_tickers.items():
         ending_aum = (current_aum[prod] * market_multipliers[tick]) + client_flows[prod]
-        total_rev += ending_aum * expense_ratios[prod]
+        total_rev += ending_aum * (expense_ratios[prod] * discount_factor)
     return total_rev
 
-def run_optimization(target_budget):
+def run_optimization(target_budget, discount_pct):
     def objective(spend):
         flows = {}
         for idx, prod in enumerate(current_aum.keys()):
@@ -91,7 +93,9 @@ def run_optimization(target_budget):
             flows[prod] = (spend[idx] ** 0.8) * product_appeal[prod] * 0.1
             
         flat_mkt = {t: 1.0 for t in product_tickers.values()}
-        return -calc_revenue(flat_mkt, flows) * 1000000
+        
+        # Multiply by 1,000,000 so the math engine can "feel" the tiny fractional differences
+        return -calc_revenue(flat_mkt, flows, discount_pct) * 1000000
 
     constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - target_budget})
     bounds = tuple((0, target_budget) for _ in range(len(current_aum)))
@@ -105,7 +109,7 @@ def run_optimization(target_budget):
 # INTERACTIVE DASHBOARD UI
 # ==========================================
 # Run optimization globally so both columns can use the outputs
-optimized_spend = run_optimization(budget)
+optimized_spend = run_optimization(budget, fee_discount)
 
 # Calculate actual projected flows from the optimized spend for the Monte Carlo simulation
 actual_flows = {}
@@ -124,7 +128,7 @@ with col1:
         "Recommended Spend ($M)": optimized_spend
     })
     
-    # Display table with the index hidden
+    # Display table with the index hidden so it looks clean and professional
     st.dataframe(opt_df.style.format({"Recommended Spend ($M)": "{:.2f}"}), hide_index=True)
 
 with col2:
@@ -135,8 +139,8 @@ with col2:
     sim_revenues = []
     for i in range(1000):
         mkt_scenario = {list(product_tickers.values())[j]: (1 + sim_returns[i, j]) for j in range(len(product_tickers))}
-        # Incorporate actual_flows into the Monte Carlo revenues
-        sim_revenues.append(calc_revenue(mkt_scenario, actual_flows))
+        # Incorporate actual_flows into the Monte Carlo revenues instead of zero_flows
+        sim_revenues.append(calc_revenue(mkt_scenario, actual_flows, fee_discount))
     
     st.metric("Expected Fee Revenue", f"${np.mean(sim_revenues):.3f} B")
     st.metric("Bear Market Risk (5th Pct)", f"${np.percentile(sim_revenues, 5):.3f} B")
