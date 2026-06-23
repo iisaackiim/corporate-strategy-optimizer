@@ -67,13 +67,21 @@ def load_market_data():
     tickers = list(product_tickers.values())
     try:
         raw_data = yf.download(tickers, period="5y", interval="1wk")["Adj Close"]
-        # Failsafe check to ensure Yahoo sent real data
+        
+        # Failsafe check 1: Ensure Yahoo sent enough rows
         if raw_data.empty or len(raw_data) < 10:
             raise ValueError("Empty data from Yahoo Finance")
             
         weekly_rets = raw_data.pct_change().dropna()
-        return weekly_rets.mean() * 52, weekly_rets.cov() * 52
-    except:
+        mean_rets = weekly_rets.mean() * 52
+        cov_mat = weekly_rets.cov() * 52
+        
+        # Failsafe check 2: Catch NaNs/Missing data to prevent LinAlgError (SVD Convergence)
+        if cov_mat.isnull().values.any() or mean_rets.isnull().any():
+            raise ValueError("Corrupted data (NaNs) detected from Yahoo Finance")
+            
+        return mean_rets, cov_mat
+    except Exception as e:
         # Failsafe baseline data so the dashboard never crashes during a presentation
         annual_returns = pd.Series([0.12, 0.10, 0.08, 0.06, 0.07], index=tickers)
         cov_matrix = pd.DataFrame(np.diag([0.04, 0.03, 0.03, 0.05, 0.02]), index=tickers, columns=tickers)
@@ -163,7 +171,13 @@ with col1:
 with col2:
     st.subheader("Monte Carlo Risk Simulator")
     np.random.seed(42)
-    sim_returns = np.random.multivariate_normal(annual_returns, cov_matrix, 1000)
+    
+    # Force arrays to strict numpy float structures to avoid Pandas/NumPy SVD conflicts
+    sim_returns = np.random.multivariate_normal(
+        annual_returns.to_numpy(dtype=float), 
+        cov_matrix.to_numpy(dtype=float), 
+        1000
+    )
     
     sim_revenues = []
     for i in range(1000):
